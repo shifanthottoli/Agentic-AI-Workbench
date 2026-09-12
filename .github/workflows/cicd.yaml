@@ -19,7 +19,7 @@ on:
 # ============================================================
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_REGION: eu-north-1
 
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
 
@@ -55,17 +55,9 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------
-      # Checkout repository
-      # ------------------------------------------------------
-
       - name: Checkout repository
         uses: actions/checkout@v6
 
-
-      # ------------------------------------------------------
-      # Setup Python
-      # ------------------------------------------------------
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -73,19 +65,11 @@ jobs:
           python-version: "3.11"
 
 
-      # ------------------------------------------------------
-      # Install dependencies
-      # ------------------------------------------------------
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-
-      # ------------------------------------------------------
-      # Basic Python syntax check
-      # ------------------------------------------------------
 
       - name: Check Python syntax
         run: |
@@ -104,27 +88,16 @@ jobs:
 
     needs: test
 
-    # Only build and push after changes reach main.
-    # Pull requests only run the test job.
     if: github.event_name != 'pull_request'
 
     steps:
-
-      # ------------------------------------------------------
-      # Checkout repository
-      # ------------------------------------------------------
 
       - name: Checkout repository
         uses: actions/checkout@v6
 
 
       # ------------------------------------------------------
-      # Configure AWS credentials
-      #
-      # Uses GitHub Repository Secrets:
-      # AWS_ACCESS_KEY_ID
-      # AWS_SECRET_ACCESS_KEY
-      # AWS_REGION
+      # AWS LOGIN
       # ------------------------------------------------------
 
       - name: Configure AWS credentials
@@ -132,11 +105,11 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: eu-north-1
 
 
       # ------------------------------------------------------
-      # Verify AWS identity
+      # VERIFY AWS
       # ------------------------------------------------------
 
       - name: Verify AWS identity
@@ -145,7 +118,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Login to Amazon ECR
+      # LOGIN TO ECR
       # ------------------------------------------------------
 
       - name: Login to Amazon ECR
@@ -154,10 +127,11 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Generate Docker image tag
+      # CREATE IMAGE URI
       # ------------------------------------------------------
 
       - name: Generate image metadata
+
         id: image
 
         env:
@@ -179,7 +153,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Build Docker image
+      # BUILD DOCKER IMAGE
       # ------------------------------------------------------
 
       - name: Build Docker image
@@ -192,7 +166,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Push Docker image to ECR
+      # PUSH IMAGE TO ECR
       # ------------------------------------------------------
 
       - name: Push Docker image
@@ -203,7 +177,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Also tag image as latest
+      # TAG AS LATEST
       # ------------------------------------------------------
 
       - name: Tag image as latest
@@ -235,21 +209,12 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------
-      # Checkout repository
-      # ------------------------------------------------------
-
       - name: Checkout repository
         uses: actions/checkout@v6
 
 
       # ------------------------------------------------------
-      # Configure AWS credentials
-      #
-      # Uses GitHub Repository Secrets:
-      # AWS_ACCESS_KEY_ID
-      # AWS_SECRET_ACCESS_KEY
-      # AWS_REGION
+      # AWS LOGIN
       # ------------------------------------------------------
 
       - name: Configure AWS credentials
@@ -258,11 +223,11 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: eu-north-1
 
 
       # ------------------------------------------------------
-      # Verify AWS identity
+      # VERIFY AWS
       # ------------------------------------------------------
 
       - name: Verify AWS identity
@@ -271,7 +236,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Login to Amazon ECR
+      # LOGIN TO ECR
       # ------------------------------------------------------
 
       - name: Login to Amazon ECR
@@ -280,7 +245,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Create image URI
+      # CREATE IMAGE URI
       # ------------------------------------------------------
 
       - name: Set image URI
@@ -303,7 +268,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Render ECS task definition
+      # RENDER ECS TASK DEFINITION
       # ------------------------------------------------------
 
       - name: Render ECS task definition
@@ -322,7 +287,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Deploy ECS service
+      # DEPLOY ECS SERVICE
       # ------------------------------------------------------
 
       - name: Deploy to Amazon ECS
@@ -343,7 +308,7 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Deployment successful
+      # SUCCESS
       # ------------------------------------------------------
 
       - name: Deployment successful
@@ -355,15 +320,12 @@ jobs:
           echo "=============================================="
 
           echo ""
-
           echo "Repository : ${GITHUB_REPOSITORY}"
           echo "Commit     : ${GITHUB_SHA}"
           echo "AWS Region : ${AWS_REGION}"
           echo "ECR        : ${ECR_REPOSITORY}"
           echo "ECS Cluster: ${ECS_CLUSTER}"
           echo "ECS Service: ${ECS_SERVICE}"
-
           echo ""
-
           echo "Application deployed successfully!"
           echo "=============================================="
