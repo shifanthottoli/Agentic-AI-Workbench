@@ -329,3 +329,4 @@ jobs:
           echo ""
           echo "Application deployed successfully!"
           echo "=============================================="
+          # CI/CD configuration updated
