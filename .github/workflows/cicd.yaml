@@ -19,8 +19,10 @@ on:
 # ============================================================
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
   ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
   ECS_SERVICE: ${{ vars.ECS_SERVICE }}
   ECS_TASK_DEFINITION: ${{ vars.ECS_TASK_DEFINITION }}
@@ -32,9 +34,12 @@ env:
 # ============================================================
 
 permissions:
-  id-token: write
   contents: read
 
+
+# ============================================================
+# JOBS
+# ============================================================
 
 jobs:
 
@@ -51,7 +56,7 @@ jobs:
     steps:
 
       # ------------------------------------------------------
-      # Checkout
+      # Checkout repository
       # ------------------------------------------------------
 
       - name: Checkout repository
@@ -64,7 +69,6 @@ jobs:
 
       - name: Setup Python
         uses: actions/setup-python@v6
-
         with:
           python-version: "3.11"
 
@@ -100,18 +104,14 @@ jobs:
 
     needs: test
 
-    # --------------------------------------------------------
-    # Only deploy after push to main.
+    # Only build and push after changes reach main.
     # Pull requests only run the test job.
-    # --------------------------------------------------------
-
     if: github.event_name != 'pull_request'
-
 
     steps:
 
       # ------------------------------------------------------
-      # Checkout
+      # Checkout repository
       # ------------------------------------------------------
 
       - name: Checkout repository
@@ -119,15 +119,20 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Configure AWS using GitHub OIDC
+      # Configure AWS credentials
+      #
+      # Uses GitHub Repository Secrets:
+      # AWS_ACCESS_KEY_ID
+      # AWS_SECRET_ACCESS_KEY
+      # AWS_REGION
       # ------------------------------------------------------
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
-
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
 
       # ------------------------------------------------------
@@ -159,15 +164,17 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
 
         run: |
+
           IMAGE_TAG="${GITHUB_SHA}"
 
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-
           echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
-          echo "Docker image:"
+          echo "=============================================="
+          echo "Docker Image"
+          echo "=============================================="
           echo "${IMAGE_URI}"
 
 
@@ -178,23 +185,25 @@ jobs:
       - name: Build Docker image
 
         run: |
+
           docker build \
             --tag "${{ steps.image.outputs.uri }}" \
             .
 
 
       # ------------------------------------------------------
-      # Push Docker image
+      # Push Docker image to ECR
       # ------------------------------------------------------
 
       - name: Push Docker image
 
         run: |
+
           docker push "${{ steps.image.outputs.uri }}"
 
 
       # ------------------------------------------------------
-      # Also tag latest
+      # Also tag image as latest
       # ------------------------------------------------------
 
       - name: Tag image as latest
@@ -203,6 +212,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
 
         run: |
+
           docker tag \
             "${{ steps.image.outputs.uri }}" \
             "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
@@ -223,14 +233,10 @@ jobs:
 
     needs: build-and-push
 
-    environment:
-      name: production
-
-
     steps:
 
       # ------------------------------------------------------
-      # Checkout
+      # Checkout repository
       # ------------------------------------------------------
 
       - name: Checkout repository
@@ -239,18 +245,33 @@ jobs:
 
       # ------------------------------------------------------
       # Configure AWS credentials
+      #
+      # Uses GitHub Repository Secrets:
+      # AWS_ACCESS_KEY_ID
+      # AWS_SECRET_ACCESS_KEY
+      # AWS_REGION
       # ------------------------------------------------------
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
 
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
 
       # ------------------------------------------------------
-      # Login to ECR
+      # Verify AWS identity
+      # ------------------------------------------------------
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+
+      # ------------------------------------------------------
+      # Login to Amazon ECR
       # ------------------------------------------------------
 
       - name: Login to Amazon ECR
@@ -270,11 +291,14 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
 
         run: |
+
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
 
           echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
-          echo "Deploying:"
+          echo "=============================================="
+          echo "Deploying Docker Image"
+          echo "=============================================="
           echo "${IMAGE_URI}"
 
 
@@ -325,14 +349,21 @@ jobs:
       - name: Deployment successful
 
         run: |
+
           echo "=============================================="
           echo "       DEPLOYMENT SUCCESSFUL"
           echo "=============================================="
+
           echo ""
+
           echo "Repository : ${GITHUB_REPOSITORY}"
           echo "Commit     : ${GITHUB_SHA}"
+          echo "AWS Region : ${AWS_REGION}"
           echo "ECR        : ${ECR_REPOSITORY}"
           echo "ECS Cluster: ${ECS_CLUSTER}"
           echo "ECS Service: ${ECS_SERVICE}"
+
           echo ""
-          echo "Application deployed successfully."
+
+          echo "Application deployed successfully!"
+          echo "=============================================="
