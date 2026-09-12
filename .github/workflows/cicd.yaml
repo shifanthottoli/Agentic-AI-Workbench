@@ -1,0 +1,338 @@
+name: Agentic AI Workbench - CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - README.md
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+
+# ============================================================
+# GLOBAL ENVIRONMENT
+# ============================================================
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+  ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+  ECS_TASK_DEFINITION: ${{ vars.ECS_TASK_DEFINITION }}
+  ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
+
+
+# ============================================================
+# PERMISSIONS
+# ============================================================
+
+permissions:
+  id-token: write
+  contents: read
+
+
+jobs:
+
+  # ==========================================================
+  # 1. TEST
+  # ==========================================================
+
+  test:
+
+    name: Run Tests
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+
+      # ------------------------------------------------------
+      # Setup Python
+      # ------------------------------------------------------
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+
+        with:
+          python-version: "3.11"
+
+
+      # ------------------------------------------------------
+      # Install dependencies
+      # ------------------------------------------------------
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+
+      # ------------------------------------------------------
+      # Basic Python syntax check
+      # ------------------------------------------------------
+
+      - name: Check Python syntax
+        run: |
+          python -m compileall app.py backend.py
+
+
+  # ==========================================================
+  # 2. BUILD + PUSH DOCKER IMAGE
+  # ==========================================================
+
+  build-and-push:
+
+    name: Build and Push Docker Image
+
+    runs-on: ubuntu-latest
+
+    needs: test
+
+    # --------------------------------------------------------
+    # Only deploy after push to main.
+    # Pull requests only run the test job.
+    # --------------------------------------------------------
+
+    if: github.event_name != 'pull_request'
+
+
+    steps:
+
+      # ------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+
+      # ------------------------------------------------------
+      # Configure AWS using GitHub OIDC
+      # ------------------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # ------------------------------------------------------
+      # Verify AWS identity
+      # ------------------------------------------------------
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+
+      # ------------------------------------------------------
+      # Login to Amazon ECR
+      # ------------------------------------------------------
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # ------------------------------------------------------
+      # Generate Docker image tag
+      # ------------------------------------------------------
+
+      - name: Generate image metadata
+        id: image
+
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+
+        run: |
+          IMAGE_TAG="${GITHUB_SHA}"
+
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+          echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+          echo "Docker image:"
+          echo "${IMAGE_URI}"
+
+
+      # ------------------------------------------------------
+      # Build Docker image
+      # ------------------------------------------------------
+
+      - name: Build Docker image
+
+        run: |
+          docker build \
+            --tag "${{ steps.image.outputs.uri }}" \
+            .
+
+
+      # ------------------------------------------------------
+      # Push Docker image
+      # ------------------------------------------------------
+
+      - name: Push Docker image
+
+        run: |
+          docker push "${{ steps.image.outputs.uri }}"
+
+
+      # ------------------------------------------------------
+      # Also tag latest
+      # ------------------------------------------------------
+
+      - name: Tag image as latest
+
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+
+        run: |
+          docker tag \
+            "${{ steps.image.outputs.uri }}" \
+            "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          docker push \
+            "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+
+  # ==========================================================
+  # 3. DEPLOY TO ECS
+  # ==========================================================
+
+  deploy:
+
+    name: Deploy to Amazon ECS
+
+    runs-on: ubuntu-latest
+
+    needs: build-and-push
+
+    environment:
+      name: production
+
+
+    steps:
+
+      # ------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+
+      # ------------------------------------------------------
+      # Configure AWS credentials
+      # ------------------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # ------------------------------------------------------
+      # Login to ECR
+      # ------------------------------------------------------
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # ------------------------------------------------------
+      # Create image URI
+      # ------------------------------------------------------
+
+      - name: Set image URI
+
+        id: image
+
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+
+          echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+          echo "Deploying:"
+          echo "${IMAGE_URI}"
+
+
+      # ------------------------------------------------------
+      # Render ECS task definition
+      # ------------------------------------------------------
+
+      - name: Render ECS task definition
+
+        id: task-def
+
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+
+        with:
+
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
+
+          image: ${{ steps.image.outputs.uri }}
+
+
+      # ------------------------------------------------------
+      # Deploy ECS service
+      # ------------------------------------------------------
+
+      - name: Deploy to Amazon ECS
+
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+
+        with:
+
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+
+          service: ${{ env.ECS_SERVICE }}
+
+          cluster: ${{ env.ECS_CLUSTER }}
+
+          wait-for-service-stability: true
+
+          enable-ecs-managed-tags: true
+
+
+      # ------------------------------------------------------
+      # Deployment successful
+      # ------------------------------------------------------
+
+      - name: Deployment successful
+
+        run: |
+          echo "=============================================="
+          echo "       DEPLOYMENT SUCCESSFUL"
+          echo "=============================================="
+          echo ""
+          echo "Repository : ${GITHUB_REPOSITORY}"
+          echo "Commit     : ${GITHUB_SHA}"
+          echo "ECR        : ${ECR_REPOSITORY}"
+          echo "ECS Cluster: ${ECS_CLUSTER}"
+          echo "ECS Service: ${ECS_SERVICE}"
+          echo ""
+          echo "Application deployed successfully."
